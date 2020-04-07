@@ -194,6 +194,9 @@ class Population():
         self.map = env
         self.pop_size = pop_size
         self.population = []
+        self.parents_elite = []
+        self.parents_ts = []
+        self.children = []
 
     def make_pop(self):
         for i in range(self.pop_size):
@@ -201,11 +204,36 @@ class Population():
             ind.make_new_ind()
             self.population.append(ind)
 
-    def sort_population(self):
+    def selection(self):
+        # using Elitist Selection and Truncation Selection
         self.population = sorted(self.population, key=lambda individual: individual.fitness, reverse=True)
+
+        #Using Elitism to select the top individuals as it is
+        selection_probability = 0.2 * len(self.population)
+        for i in range(int(selection_probability)):
+            self.parents_elite.append(self.population[i])
+        
+        #selecting using Truncation Selection (TRS)
+        p = random.randrange(30, 50)/100
+        selection_pressure = len(self.population) * p
+        for i in range(int(selection_pressure + 1)):
+            parent = random.choice(self.population[int(self.probability):])
+            self.parents_ts.append(parent)        
     
     def crossover(self):
-        pass
+        # Approach as proposed in the paper (SAME ADJACENCY CROSSOVER)
+        p1 = random.choice(self.parents_elite)
+        p2 = random.choice(self.parents_ts)
+        vf = len(p1)
+        vs = len(p2)
+
+        #Start main loop
+        for i in range(vf):
+            for j in range(vs):
+                if self.isFeasible():
+                    pass
+        
+        
     def mutation(self):
         pass
     
