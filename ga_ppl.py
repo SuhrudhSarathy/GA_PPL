@@ -110,13 +110,14 @@ class Map():
 class Individual():
     def __init__(self, env):
         self.map = env
-        self.chromosome = [] # chromosome will be a sequence of points that make up the path
+        self.path = [] # chromosome will be a sequence of points that make up the path
         self.fitness = 0 # will be automatically updated by the fitness function
         self.fscost = 0 # First safety cost 
         self.sscost = 0 # second safety cost
         self.rotation_cost = 0 # no. of rotations made (consider if rotation angle greater than 90*)
         self.length = 0 # the length used is calculated using euclidean distance
-
+        self.goal_cost = 0
+        self.reached_goal = False # will be updated if individual reaches goal based on conditions
 
     def init_chromosome(self):
         '''
@@ -126,7 +127,7 @@ class Individual():
         current_node = self.path[0]
         current_x, current_y = current_node.x, current_node.y
         while True:            
-            dist, ind = self.map.tree.query(np.array([[current_x, current_y]]), 10)
+            dist, ind = self.map.tree.query(np.array([[current_x, current_y]]), 6)
             nn = random.choice(ind[0]) # converting nparray to list
             if self.check_intersection((current_x, current_y), (self.map.node_points[nn][0], self.map.node_points[nn][1])):
                 continue
@@ -137,6 +138,10 @@ class Individual():
                 if current_x == self.map.goal.x and current_y == self.map.goal.y:
                     self.reached_goal = True
                     break
+            if len(self.path) > 2000 and self.reached_goal == False:
+                self.goal_cost = 1
+                break
+
         self.path_line = LineString([(point.x, point.y) for point in self.path])
         '''print(self.path[-1].coordinate, len(self.path))
         plt.plot([p[0] for p in self.path_line.coords], [p[1] for p in self.path_line.coords], color='green')'''
@@ -168,17 +173,17 @@ class Individual():
         except IndexError:
             pass                     
     
-    def get_fitness(self, wl, ws1, ws2):
-        self.fitness = (1 / (wl * self.length + ws1 * self.fscost + ws2 * self.sscost)) - self.rotation_cost
+    def get_fitness(self, wl, ws1, ws2, wgc):
+        self.fitness = (1 / (wl * self.length + ws1 * self.fscost + ws2 * self.sscost)) - self.rotation_cost - wgc * self.goal_cost
 
     def make_new_ind(self):
         self.init_chromosome()
         self.get_all_costs()
-        self.get_fitness(0.09, 0.005, 0.001)
+        self.get_fitness(0.09, 0.005, 0.001, 0.5)
         print('Done')
 
     def make_all_zero(self):
-        self.chromosome = [] # chromosome will be a sequence of points that make up the path
+        self.path = [] # chromosome will be a sequence of points that make up the path
         self.fitness = 0 # will be automatically updated by the fitness function
         self.fscost = 0 # First safety cost 
         self.sscost = 0 # second safety cost
@@ -186,6 +191,7 @@ class Individual():
         self.length = 0 # the length used is calculated using euclidean distance
 
     def plot_ind(self):
+        self.path_line = LineString([(point.coordinate.x, point.coordinate.y) for point in self.path])
         plt.plot([p[0] for p in self.path_line.coords], [p[1] for p in self.path_line.coords], color='green')
 
 
@@ -205,6 +211,7 @@ class Population():
             self.population.append(ind)
 
     def selection(self):
+        print('selection')
         # using Elitist Selection and Truncation Selection
         self.population = sorted(self.population, key=lambda individual: individual.fitness, reverse=True)
 
@@ -217,36 +224,125 @@ class Population():
         p = random.randrange(30, 50)/100
         selection_pressure = len(self.population) * p
         for i in range(int(selection_pressure + 1)):
-            parent = random.choice(self.population[int(self.probability):])
+            parent = random.choice(self.population[int(selection_probability):])
             self.parents_ts.append(parent)        
     
     def crossover(self):
+        childlist = []
+        crosspointlist = []
+        mathpointlist = []
         # Approach as proposed in the paper (SAME ADJACENCY CROSSOVER)
         p1 = random.choice(self.parents_elite)
         p2 = random.choice(self.parents_ts)
-        vf = len(p1)
-        vs = len(p2)
+        vf = len(p1.path)
+        vs = len(p2.path)
 
         #Start main loop
         for i in range(vf):
+            print('crossover')
             for j in range(vs):
-                if self.isFeasible():
+                try:
+                    if self.isFeasible(p1.path[i+1], p2.path[j]) == True and self.isFeasible(p2.path[j+1], p1.path[i]) == True:
+                        crosspointlist.append(i)
+                        mathpointlist.append(j)
+                except IndexError:
                     pass
+        for k in range(len(crosspointlist)):
+            print('crossover2')
+            #getting variables i, j
+            i = crosspointlist[k]
+            j = mathpointlist[k]
+            
+            try:
+            #Offspring Generation
+                offspring1 = Individual(my_map)
+                offspring2 = Individual(my_map)
+
+                # making offspring2
+                
+                offspring1.path.extend(p1.path[:i+1])
+                offspring1.path.extend(p2.path[j+1:])
+
+                #making offspring1
+                offspring2.path.extend(p2.path[:j+1])
+                offspring2.path.extend(p1.path[i+1:])
+
+                #Add both offspring to childlists
+                childlist.append(offspring1)
+                childlist.append(offspring2)
+
+            except IndexError:
+                pass
+
+        childlist = sorted(childlist, key=lambda individual: individual.fitness)
+        self.children.append(childlist[0])
+        self.children.append(childlist[1])
+
+    def isFeasible(self, parent1, parent2):
+        '''
+            Feasibility Conditions:
+            1. Path joining two points should not pass through an obstacle
+            2. Path length <= sqrt(2)
+        '''
+        point1 = parent1.coordinate
+        point2 = parent2.coordinate
+        line = LineString([point1, point2])
+        for obstacle in self.map.obstacles:
+            if line.intersects(obstacle.polygon) or np.sqrt((point1.x - point2.x)**2 + (point1.y - point2.y)**2) <= np.sqrt(2):
+                isFeasible = False
+                break
+            else:
+                isFeasible = True
+        return isFeasible
+
+    def mutation(self, individual):
+        mutation_node = random.choice(individual.path[1:-1])
+        dist, ind = self.map.tree.query(np.array([[mutation_node.coordinate.x, mutation_node.coordinate.y]]), 3)
+        nn = random.choice(ind[0])
+        change_node = self.map.nodes[nn]
+        if self.isFeasible(mutation_node, change_node) == True:
+            index = individual.path[1:-1].index(mutation_node)
+            individual.path.remove(mutation_node)
+            individual.path.insert(index, change_node)
+
+        else:
+            pass
         
-        
-    def mutation(self):
-        pass
-    
+    def mutate_population(self):    
+        print('mutation')    
+        prob = random.random()
+        for i in range(len(self.children)):
+            if prob < 0.2:
+                print('Mutation')
+                self.mutation(self.children[i])
+
+    def set_to_zero(self):
+        self.parents_elite = []
+        self.parents_ts = []
+        self.children = []
+
+    def start_evolution(self, max_iter):
+        iter_num = 0
+        self.make_pop()
+        while iter_num < max_iter:
+            self.selection()
+            self.crossover()
+            self.mutate_population()
+            self.children = self.population
+            self.set_to_zero()
+            print(iter_num + 1)
+            iter_num += 1 
+        self.fittest = self.get_fittest()
+
+    def get_fittest(self):
+        fittest = self.population[0] 
+        return fittest   
 
 if __name__ == '__main__':
     my_map = Map(5)
     my_map.init_map()
     population = Population(100, my_map)
-    population.make_pop()
-    population.sort_population()
-    print(population.population[0].fitness)
-    population.population[0].plot_ind()
-    plt.show()
+    population.start_evolution(100)
     
     
 
